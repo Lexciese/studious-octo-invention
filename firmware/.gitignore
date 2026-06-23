@@ -8,5 +8,10 @@
 .vscode/
 !.vscode/extensions.json
 
-# Local config with hotspot password and dashboard host IP — keep out of git
+# Local config with hotspot password — keep out of git
 src/config.h
+
+# LittleFS data dir — populated by scripts/build-dashboard.sh, flashed with
+# `pio run -t uploadfs`. Contents are a build artifact (copy of dashboard/out/).
+data/*
+!data/.gitkeep

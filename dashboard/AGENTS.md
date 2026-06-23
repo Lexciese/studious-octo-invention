@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Next.js web dashboard for the Smart Farming system. Displays live ESP32 sensor readings (temperature, humidity, soil moisture, light), exposes the "SIRAM" irrigation control button, and brokers state between the browser and ESP32 via REST polling. Designed to run on the local network so the ESP32 can push readings and poll for commands using the same endpoints.
+Next.js web dashboard for the Smart Farming system. Displays live ESP32 sensor readings (temperature, humidity, soil moisture, light) and exposes the "SIRAM" irrigation control button. Built as a static export and flashed onto the ESP32's LittleFS — the ESP32 serves it directly to browsers on its hotspot (`http://192.168.4.1/`). The browser polls same-origin `/api/sensors` and POSTs same-origin `/api/siram`; the ESP32 is both the static file host and the API server.
 
 ## Ownership
 
@@ -14,48 +14,64 @@ Next.js web dashboard for the Smart Farming system. Displays live ESP32 sensor r
 ### Critical — Next.js 16 Rules (from create-next-app)
 
 <!-- BEGIN:nextjs-agent-rules -->
-This version of Next.js has breaking changes — APIs, conventions, and file structure may all differ from older training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing or modifying Next.js-specific code (route handlers, layouts, metadata, caching, server components). Heed deprecation notices.
+This version of Next.js has breaking changes — APIs, conventions, and file structure may all differ from older training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing or modifying Next.js-specific code (layouts, metadata, caching, client components, static export). Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
-### REST Contract (broker between browser and ESP32)
+### REST Contract (browser ↔ ESP32, same-origin)
 
-All JSON. Endpoints are forward-compatible — the real ESP32 implements the same contract.
+All JSON, all under `http://192.168.4.1/`. No broker, no CORS, no mixed content.
 
 **Sensors**
-- `GET  /api/sensors` → `SensorsResponse = { reading: SensorReading | null, receivedAt: number | null }` — latest known reading plus the dashboard server's epoch-ms receive timestamp (browser polls every ~2s). Use `receivedAt` — NOT `reading.timestamp` — for staleness: ESP32 devices without an RTC produce meaningless timestamps (uptime since boot).
-- `POST /api/sensors/ingest` body: `SensorReading` → `204 No Content` — ESP32 pushes a new reading. `receivedAt` is stamped server-side here, not by the device.
+- `GET /api/sensors` → `SensorReading | null` — ESP32 reads sensors on-demand per request (no caching) and serializes via `json_helpers.h`. Browser polls every ~2s.
 
 **SIRAM**
-- `POST /api/siram` body: `{ source?: "web" | "esp32" | "system" }` → `{ ok, queued, queuedAt }` — browser (or any client) queues a command.
-- `GET  /api/siram/command` → `{ pending: false } | { pending: true, queuedAt }` — ESP32 polls; backend returns **and clears** the pending command atomically on read.
+- `POST /api/siram` body: `{ source?: "web" | "esp32" | "system" }` → `{ ok: true, queuedAt: <uptime-ms> }` — ESP32 latches relay+LED on immediately and returns. The `queued`/`pending` fields from the old broker contract are gone; the ESP32 is the executor, not a queue.
+
+### Staleness Semantics (no server-stamped timestamps)
+
+The ESP32 has no RTC, so no epoch-ms timestamps cross the wire. Connection state is derived **purely from the browser's perspective**:
+- Any successful poll → `fresh`.
+- `FAIL_THRESHOLD` (2) consecutive failures → `stale`.
+
+`SensorReading.timestamp` exists in the type for forward compatibility (future RTC-equipped devices) but is **not used** for staleness today. Do not add server-stamped fields back without an epoch source.
 
 ### Source of Truth for Shapes
 
-`src/lib/types.ts` defines `SensorReading`, `SiramCommand`, and the response wrappers. Update this file when changing any contract; the ESP32 firmware (when added) must mirror it.
+`src/lib/types.ts` defines `SensorReading` and the response shapes. Update this file when changing any contract; the firmware mirrors it in `firmware/src/types.h`.
 
-### State Broker
+### Client Mock (dev-only)
 
-`src/lib/deviceState.ts` is an in-memory singleton holding the latest reading and a single pending SIRAM command. Stateless processes / serverless will not work without replacing this with shared storage (Redis, DB, or sticky sessions).
+`src/lib/clientMock.ts` simulates an ESP32 in the browser. Active when `NEXT_PUBLIC_USE_CLIENT_MOCK=true` (set automatically by `npm run dev` and `npm run build`). Generates jittered readings on each poll and acks SIRAM POSTs with `Date.now()` as `queuedAt`. Disabled by `npm run build:esp` so the production static export fetches from the real ESP32.
 
-### Mock Device
+### Build Modes
 
-`src/lib/mockDevice.ts` simulates an ESP32 in dev only (`NODE_ENV !== 'production'` and `MOCK_DEVICE !== 'false'`). It ticks every `MOCK_TICK_MS` ms and writes jittered readings into `deviceState`. Guards against double-start via `globalThis.__mockDeviceStarted` to survive Next.js dev hot reload.
+- `npm run dev` — Next.js dev server with the client mock active. Hot reload, no ESP32 needed.
+- `npm run build` — Next.js production server build. Kept for compatibility; not used in production. Will fail if the dev mock path can't resolve, but should otherwise compile.
+- `npm run build:esp` — Sets `BUILD_TARGET=esp` and `NEXT_PUBLIC_USE_CLIENT_MOCK=false`, enables `output: 'export'` in `next.config.ts`, and writes static HTML/CSS/JS to `out/`. This is what gets bundled into firmware LittleFS.
 
 ## Work Guidance
 
 ### Layout
 
-- `src/app/` — App Router pages and route handlers.
+- `src/app/` — App Router pages only. No API routes — the ESP32 serves the API now. (Previous `/api/*` routes were deleted with the broker.)
 - `src/components/` — React components (`Dashboard` is the client orchestrator).
 - `src/hooks/` — Client hooks (`useSensorPolling` owns the polling loop and SIRAM trigger state machine).
-- `src/lib/` — Pure logic: types, state broker, mock device.
+- `src/lib/` — Pure logic: `types.ts`, `clientMock.ts`.
 
 ### Polling Loop
 
-- Browser polls `/api/sensors` every `NEXT_PUBLIC_POLL_INTERVAL_MS` (default 2000).
-- Each tick derives connection state from `receivedAt`: age > `NEXT_PUBLIC_STALE_AFTER_MS` (default 10000) → `stale`, otherwise `fresh`. There is no separate watchdog effect.
-- A failed poll increments an in-ref counter; the connection flips to `stale` only after `FAIL_THRESHOLD` (currently 2) consecutive failures, so a single transient blip doesn't flicker the pill.
+- Browser polls `/api/sensors` every `NEXT_PUBLIC_POLL_INTERVAL_MS` (default 2000). Relative path — works same-origin when the ESP32 serves the page.
+- Each successful poll → `fresh`; `failCount.current += 1` on failure. After `FAIL_THRESHOLD` (2) consecutive failures → `stale`. A single transient blip doesn't flicker the pill.
+- When `NEXT_PUBLIC_USE_CLIENT_MOCK=true`, the hook skips `fetch` and calls `mockSensorReading()` / `mockSiramResponse()` directly — useful for `npm run dev` without hardware.
 - SIRAM trigger POSTs `/api/siram` immediately on click and shows an optimistic `queued` state for 3s before resetting.
+
+### Static Export Constraints
+
+When adding features, anything that requires server-side execution breaks `npm run build:esp`:
+- No API route handlers (`src/app/api/**`). The ESP32 owns the API.
+- No `cookies()`, `headers()`, `draftMode()`, `force-dynamic` in any component.
+- No `next/image` with remote patterns (use `images: { unoptimized: true }`, already configured in `next.config.ts`).
+- `next/font/google` works — fonts are inlined at build time. Build machine needs internet.
 
 ### UI
 
@@ -67,19 +83,10 @@ All JSON. Endpoints are forward-compatible — the real ESP32 implements the sam
 
 ## Verification
 
-- `npm run build` from `dashboard/` — must compile clean.
-- `npm run dev` → open `http://localhost:3000`, sensor cards must update every ~2s.
-- REST smoke test (with server running):
-  ```bash
-  curl localhost:3000/api/sensors
-  curl -X POST localhost:3000/api/siram -H 'Content-Type: application/json' -d '{"source":"web"}'
-  curl localhost:3000/api/siram/command      # { pending: true, queuedAt: ... }
-  curl localhost:3000/api/siram/command      # { pending: false }  (consumed)
-  curl -X POST localhost:3000/api/sensors/ingest \
-    -H 'Content-Type: application/json' \
-    -d '{"temperatureC":24.5,"humidityPct":58,"soilMoisturePct":35,"lightLux":9000,"deviceId":"x","timestamp":1718400000000}'
-  ```
+- `npm run build:esp` from `dashboard/` — must produce `out/index.html` and `out/_next/static/**` with no TypeScript or ESLint errors.
+- `npm run dev` → open `http://localhost:3000`, sensor cards must update every ~2s from the client mock; SIRAM button transitions through sending→queued→idle.
+- End-to-end with hardware: see `firmware/README.md`.
 
 ## Child DOX Index
 
-No child AGENTS.md files yet. Add a child for `src/app/api/` if route handler contracts grow complex enough to warrant their own rules.
+No child AGENTS.md files yet.

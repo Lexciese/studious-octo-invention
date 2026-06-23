@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SensorReading, SensorsResponse } from "@/lib/types";
+import { mockSensorReading, mockSiramResponse } from "@/lib/clientMock";
+import type { SensorReading, SiramTriggerResponse } from "@/lib/types";
 
 const POLL_MS = Number(process.env.NEXT_PUBLIC_POLL_INTERVAL_MS ?? 2000);
-const STALE_MS = Number(process.env.NEXT_PUBLIC_STALE_AFTER_MS ?? 10000);
 // Number of consecutive failed polls before flipping to "stale". Absorbs
 // transient network blips without flickering the status pill.
 const FAIL_THRESHOLD = 2;
+const USE_CLIENT_MOCK =
+  process.env.NEXT_PUBLIC_USE_CLIENT_MOCK === "true";
 
 export type ConnectionState = "connecting" | "fresh" | "stale";
 
@@ -36,18 +38,19 @@ export function useSensorPolling(): UseSensorPolling {
   const failCount = useRef(0);
 
   const tick = useCallback(async () => {
+    if (USE_CLIENT_MOCK) {
+      setReading(mockSensorReading());
+      failCount.current = 0;
+      setConnection("fresh");
+      return;
+    }
     try {
       const res = await fetch("/api/sensors", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as SensorsResponse;
-
+      const data = (await res.json()) as SensorReading | null;
       failCount.current = 0;
-      setReading(data.reading);
-
-      // Use the dashboard's receivedAt (reliable) — NOT reading.timestamp,
-      // which on devices without an RTC (ESP32 in AP mode) is uptime-since-boot.
-      const age = data.receivedAt ? Date.now() - data.receivedAt : Infinity;
-      setConnection(age > STALE_MS ? "stale" : "fresh");
+      setReading(data);
+      setConnection("fresh");
     } catch {
       failCount.current += 1;
       if (failCount.current >= FAIL_THRESHOLD) {
@@ -67,13 +70,18 @@ export function useSensorPolling(): UseSensorPolling {
   const triggerSiram = useCallback(async () => {
     setSiram({ status: "sending", lastQueuedAt: null, error: null });
     try {
-      const res = await fetch("/api/siram", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: "web" }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { queuedAt: number };
+      let data: SiramTriggerResponse;
+      if (USE_CLIENT_MOCK) {
+        data = mockSiramResponse();
+      } else {
+        const res = await fetch("/api/siram", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source: "web" }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        data = (await res.json()) as SiramTriggerResponse;
+      }
       setSiram({
         status: "queued",
         lastQueuedAt: data.queuedAt,

@@ -1,8 +1,8 @@
-# Firmware — ESP32 Sensor + Irrigation Controller
+# Firmware — ESP32 Sensor + Irrigation Controller + Dashboard Host
 
 ## Purpose
 
-ESP32 firmware implementing the device side of the smart-farming REST contract. Broadcasts a WiFi hotspot (soft-AP at `192.168.4.1`) so a laptop running the Next.js dashboard can join from anywhere without an existing network. Pushes sensor readings every 5 s and polls for SIRAM irrigation commands every 1 s. Drives a water-pump relay + the on-board LED when a command arrives.
+ESP32 firmware for the Smart Farming system. Broadcasts a WiFi hotspot (soft-AP at `192.168.4.1`), serves the Next.js dashboard directly to browsers over HTTP on port 80, reads sensors on demand, and drives a water-pump relay + the on-board LED when SIRAM is triggered. No laptop broker — the ESP32 is the dashboard host, the API server, and the I/O controller all in one.
 
 ## Ownership
 
@@ -14,29 +14,41 @@ ESP32 firmware implementing the device side of the smart-farming REST contract. 
 ### Topology
 
 ```
-   ┌──── ESP32 (soft-AP 192.168.4.1) ────┐
-   │  WiFi hotspot "SmartFarm"           │
-   │  POST /api/sensors/ingest  ───────►  Laptop (DHCP 192.168.4.2+)
-   │  GET  /api/siram/command   ◄───────  runs Next.js dashboard:3000
-   └─────────────────────────────────────┘
+   ┌──── ESP32 (soft-AP 192.168.4.1) ──────────────────┐
+   │  WiFi hotspot "SmartFarm" (open or WPA2)          │
+   │                                                    │
+   │  WebServer :80  ◄─────── Phone/laptop joins hotspot
+   │    GET  /                → dashboard HTML          │
+   │    GET  /_next/static/** → JS/CSS/fonts (LittleFS) │
+   │    GET  /favicon.ico     → icon (LittleFS)         │
+   │    GET  /api/sensors     → JSON                    │
+   │    POST /api/siram       → JSON                    │
+   │                                                    │
+   │  GPIO 2  → on-board LED (mirrors relay state)      │
+   │  GPIO 26 → water pump relay                        │
+   └────────────────────────────────────────────────────┘
 ```
 
-The dashboard is the state broker (see `dashboard/AGENTS.md`). The firmware is a thin HTTP client to it.
+The dashboard is a static Next.js export bundled into LittleFS. The browser loads it from `http://192.168.4.1/` and polls same-origin `/api/*` endpoints.
 
-### REST Contract
+### REST Contract (browser ↔ ESP32, same-origin)
 
 Must mirror `dashboard/src/lib/types.ts`. Shared C++ structs are in `src/types.h`. Wire format:
 
 | Method | Endpoint | Body / Response |
 |--------|----------|------------------|
-| `POST` | `/api/sensors/ingest` | body: `{ temperatureC, humidityPct, soilMoisturePct, lightLux, deviceId, timestamp }` → `204` |
-| `GET`  | `/api/siram/command`  | `{ pending: false }` or `{ pending: true, queuedAt }` (atomic consume on read) |
+| `GET`  | `/api/sensors` | `{ temperatureC, humidityPct, soilMoisturePct, lightLux, deviceId, timestamp }` — sensors read on-demand per request |
+| `POST` | `/api/siram`   | body: `{ source?: "web" }` → `{ ok: true, queuedAt: <millis()> }`; relay + LED latch on immediately for `SIRAM_DURATION_MS` |
 
-When changing either side, update both `firmware/src/types.h` and `dashboard/src/lib/types.ts` together.
+No queue, no pending state — the ESP32 is the executor, not a broker.
+
+### Static File Contract (LittleFS)
+
+`firmware/data/` is populated at build time by `scripts/build-dashboard.sh` (runs `npm run build:esp` in `dashboard/`, copies `out/*`, strips `.br`/`.gz` precompressed files since the sync `WebServer` won't auto-serve them). `data/` is gitignored — it's a build artifact, not source. The flash sequence must run `pio run -t uploadfs` after the script; a fresh clone with empty `data/` will boot fine but serve 404s for the dashboard.
 
 ### Configuration
 
-- `src/config.h` is **gitignored** — it holds the local hotspot password and dashboard host IP. Edit directly; do not commit.
+- `src/config.h` is **gitignored** — it holds the local hotspot password and device ID. Edit directly; do not commit.
 - `src/config.example.h` is the committed template. Copy to `config.h` for first-time setup.
 - `AP_USE_PASSWORD` toggles open vs WPA2-PSK. When `true`, `AP_PASSWORD` must be 8+ characters (WiFi library silently fails to start the AP otherwise).
 
@@ -49,41 +61,47 @@ When changing either side, update both `firmware/src/types.h` and `dashboard/src
 | Future I2C SDA / SCL | 21 / 22 |
 | Future capacitive soil analog | 34 |
 
+### Partition Layout
+
+`partitions.csv` defines a no-OTA layout: ~2 MB app + ~2 MB LittleFS on the 4 MB esp32dev flash. If the dashboard export outgrows LittleFS, adjust here (and re-measure with `du -sh dashboard/out/`).
+
 ## Work Guidance
 
 ### Technology Stack
 
 - ESP32 Arduino framework via PlatformIO (`espressif32` platform, `esp32dev` board).
 - `bblanchon/ArduinoJson @ ^7` for JSON serialize/parse (declared in `platformio.ini`).
+- Built-in `WebServer` (synchronous) on port 80, `LittleFS` for static files, `WiFi` soft-AP. All in the ESP32 Arduino core — no extra `lib_deps` needed.
 - ESP32 Arduino core 3.x unified WiFi event API — use `WiFi.onEvent()` with `arduino_event_id_t` and `arduino_event_info_t`. Do not use the removed `WiFi.onSoftAPModeStationConnected` style callbacks.
 
 ### Code Layout
 
-- `src/main.cpp` — setup + loop. Two `millis()`-based timers (POST every 5 s, POLL every 1 s) plus `siram.update()` every iteration.
+- `src/main.cpp` — setup + loop. `loop()` calls `handleHttpClient()` (processes at most one ready request then returns) and `siram.update()` every iteration; heartbeat every 10 s.
 - `src/wifi_ap.{h,cpp}` — soft-AP setup, station-event logging.
-- `src/dashboard_client.{h,cpp}` — `postReading` + `pollCommand` via `HTTPClient`.
-- `src/sensors.{h,cpp}` — sensor reads. Default: jittered mock values. TODO comments document where real libraries (BME280, BH1750, capacitive analog) plug in.
+- `src/web_server.{h,cpp}` — `WebServer` wrapper. Routes for `/`, `/_next/static/**`, `/favicon.ico`, `/api/sensors`, `/api/siram`, plus a 404 handler.
+- `src/sensors.{h,cpp}` — sensor reads. Called on-demand from the `/api/sensors` handler. Default: jittered mock values. TODO comments document where real libraries (BME280, BH1750, capacitive analog) plug in.
 - `src/siram.{h,cpp}` — non-blocking relay + LED control with timed release.
 - `src/types.h` — structs mirroring `dashboard/src/lib/types.ts`.
 - `src/json_helpers.h` — inline ArduinoJson serialize/parse helpers.
 
 ### Loop Conventions
 
-- **No `delay()`** — use `millis()` deltas so the loop stays responsive during a 5 s SIRAM activation.
-- HTTP timeouts are 5 s per call. Failed calls log and continue; they don't halt the loop.
+- **No `delay()`** — use `millis()` deltas so the loop stays responsive during a 5 s SIRAM activation and so `WebServer.handleClient()` gets called frequently enough to stream large static assets.
 - All serial log lines are prefixed with `[AP]`, `[HTTP]`, `[SIRAM]`, or `[MAIN]` for easy grep.
 
 ## Verification
 
 ```bash
 cd firmware
-pio run                 # compile (must exit 0 with [SUCCESS])
-pio run -t size         # report flash/RAM usage
-pio run -t upload       # flash over USB
-pio device monitor -b 115200   # watch serial log
+./scripts/build-dashboard.sh    # build dashboard + populate data/  (requires dashboard/)
+pio run                         # compile firmware (must exit 0 with [SUCCESS])
+pio run -t size                 # report flash/RAM usage
+pio run -t upload               # flash firmware over USB
+pio run -t uploadfs             # flash LittleFS image (dashboard files)
+pio device monitor -b 115200    # serial log (Ctrl+] to exit)
 ```
 
-End-to-end smoke test (requires hardware + laptop): see `README.md`.
+End-to-end smoke test (requires hardware): see `README.md`.
 
 ## Child DOX Index
 

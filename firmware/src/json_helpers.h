@@ -5,8 +5,7 @@
 
 #include "types.h"
 
-// Serialize a SensorReading into the JSON shape the dashboard's
-// `/api/sensors/ingest` endpoint expects.
+// Serialize a SensorReading into the JSON shape returned by GET /api/sensors.
 inline String serializeReading(const SensorReading& r) {
   JsonDocument doc;
   doc["temperatureC"]     = r.temperatureC;
@@ -18,18 +17,6 @@ inline String serializeReading(const SensorReading& r) {
   String out;
   serializeJson(doc, out);
   return out;
-}
-
-// Parse the JSON returned by `/api/siram/command` into out.
-// Returns true if the parse succeeded.
-inline bool parseSiramCommand(const String& body, SiramCommand& out) {
-  JsonDocument doc;
-  if (deserializeJson(doc, body) != DeserializationError::Ok) {
-    return false;
-  }
-  out.pending  = doc["pending"] | false;
-  out.queuedAt = doc["queuedAt"] | (int64_t)0;
-  return true;
 }
 
 #endif // JSON_HELPERS_H

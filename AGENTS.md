@@ -84,36 +84,52 @@ Default section order:
 
 ## Work Guidance
 
+### Ponytail Mode
+
+All agents and developers in this repo operate in lazy-senior-dev mode:
+
+1. **Stop at the first rung that holds**: YAGNI → stdlib → platform → existing dep → one line → minimum code.
+2. **No abstractions unless requested. No new deps if avoidable. No boilerplate nobody asked for.**
+3. Deletion over addition. Boring over clever. Fewest files possible.
+4. Question complex requests: "Do you actually need X, or does Y cover it?"
+5. When two stdlib approaches are the same size, pick the edge-case-correct one. Lazy means less code, not the flimsier algorithm.
+6. Mark intentional simplifications with `ponytail:` comment. Name the ceiling and upgrade path.
+7. **Not lazy about**: input validation at trust boundaries, error handling that prevents data loss, security, accessibility, hardware calibration, anything explicitly requested.
+8. Non-trivial logic leaves **one runnable check** — an assert-based self-check or one small test file. No frameworks, no fixtures. Trivial one-liners need no test.
+
 ### Technology Stack
 
-- **Web dashboard**: Next.js 16 (App Router) + React 19 + TypeScript + Tailwind CSS v4. Lives in `dashboard/`.
-- **ESP32 firmware**: Arduino framework via PlatformIO, single `esp32dev` environment. WiFi soft-AP mode (ESP32 broadcasts its own hotspot at `192.168.4.1`); laptop running the dashboard joins and the firmware POSTs/polls it. Lives in `firmware/`.
-- **Device comms**: REST polling. Next.js route handlers act as a state broker between browser and ESP32.
+- **Web dashboard**: Next.js 16 (App Router) + React 19 + TypeScript + Tailwind CSS v4. Lives in `dashboard/`. Built as a **static export** and flashed onto the ESP32's LittleFS — the ESP32 serves it directly to browsers on its hotspot.
+- **ESP32 firmware**: Arduino framework via PlatformIO, single `esp32dev` environment. WiFi soft-AP mode (ESP32 broadcasts its own hotspot at `192.168.4.1`) **and** HTTP server on port 80 serving the dashboard + JSON API. Lives in `firmware/`.
+- **Device comms**: REST, same-origin. Browser at `http://192.168.4.1/` fetches `/api/sensors` and POSTs `/api/siram` directly to the ESP32 — no broker, no mixed-content (all HTTP, one origin).
 
 ### Code Style
 
 - TypeScript strict mode; no `any` without justification.
 - Tailwind utility-first styling; theme tokens defined in `dashboard/src/app/globals.css`.
 - No comments unless the *why* is non-obvious. Do not describe what the code does.
-- API contracts (request/response shapes) live in `dashboard/src/lib/types.ts` and are the source of truth for both browser and ESP32.
+- API contracts (request/response shapes) live in `dashboard/src/lib/types.ts` and are the source of truth for the browser; the firmware mirrors them in `firmware/src/types.h`.
 
 ### Development Workflow
 
-- Web work happens inside `dashboard/`; run `npm run dev` from there.
+- Web work happens inside `dashboard/`; run `npm run dev` from there (uses a client-side mock for sensor data). Run `npm run build:esp` to produce the static export consumed by the firmware.
+- Firmware work happens inside `firmware/`; flash sequence is `pio run -t upload` + `pio run -t uploadfs` (LittleFS image).
 - All changes require DOX pass before completion.
 - Read DOX chain before editing; update DOX after meaningful changes.
 
 ## Verification
 
-- `cd dashboard && npm run build` — must compile with no TypeScript or ESLint errors.
-- `cd dashboard && npm run dev` — dashboard renders at `http://localhost:3000`; mock device ticker pushes readings every 2s.
-- REST contract smoke test (see `dashboard/AGENTS.md`).
+- `cd dashboard && npm run build` — must compile with no TypeScript or ESLint errors (server build, kept for compatibility).
+- `cd dashboard && npm run build:esp` — must produce `dashboard/out/` with `index.html` and `_next/static/**` (this is what gets bundled into firmware LittleFS).
+- `cd dashboard && npm run dev` — dashboard renders at `http://localhost:3000`; client-side mock updates sensor cards every 2s.
+- `cd firmware && pio run` — must compile with `[SUCCESS]`.
+- End-to-end (with hardware): see `firmware/README.md`.
 
 ## Child DOX Index
 
-- [`dashboard/AGENTS.md`](dashboard/AGENTS.md) — Next.js web dashboard: live sensor display, SIRAM control button, REST state broker for ESP32 comms. Also carries the Next.js 16 in-tree rules from `create-next-app`.
-- [`firmware/AGENTS.md`](firmware/AGENTS.md) — ESP32 Arduino firmware: WiFi soft-AP, mock sensor reads with extension points, SIRAM relay + LED control, REST client to the dashboard.
+- [`dashboard/AGENTS.md`](dashboard/AGENTS.md) — Next.js web dashboard: live sensor display + SIRAM control button. Built two ways (`dev` with client-side mock, `build:esp` static export for the ESP32). Also carries the Next.js 16 in-tree rules from `create-next-app`.
+- [`firmware/AGENTS.md`](firmware/AGENTS.md) — ESP32 Arduino firmware: WiFi soft-AP, built-in `WebServer` on port 80 serving the dashboard from LittleFS plus `/api/sensors` and `/api/siram` JSON endpoints, mock sensor reads with extension points, SIRAM relay + LED control.
 
 ---
 
-*Last updated: 2026-06-14*
+*Last updated: 2026-06-21*

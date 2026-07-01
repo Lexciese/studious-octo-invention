@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds the Next.js dashboard as a static export and copies it into the
-# firmware's LittleFS data directory. Run this before `pio run -t uploadfs`.
+# firmware's data directory for SPIFFS upload. Run this before both
+# `pio run -t upload` and `pio run -t uploadfs`.
 #
 # Usage:
 #   cd firmware
@@ -41,7 +42,16 @@ cp -r "$OUT_DIR"/. "$DATA_DIR/"
 echo "==> Stripping .br / .gz precompressed variants"
 find "$DATA_DIR" -type f \( -name '*.br' -o -name '*.gz' \) -delete
 
+# Strip Next.js metadata debug files — not needed on the ESP32 and they waste
+# scarce SPIFFS space.
+find "$DATA_DIR" -name '__next.*.txt' -delete
+
+# Strip .woff2 font files — the old mklittlefs tool shipped with PlatformIO
+# can't open filenames with Next.js's double-dot content hash. Browsers fall
+# back gracefully to system fonts without them.
+find "$DATA_DIR" -name '*.woff2' -delete
+
 # Keep .gitkeep tracked even when data/ is gitignored as a build artifact.
 touch "$DATA_DIR/.gitkeep"
 
-echo "==> Done. Next: pio run -t uploadfs   (then pio run -t upload)"
+echo "==> Done. Next: pio run -t upload && pio run -t uploadfs"

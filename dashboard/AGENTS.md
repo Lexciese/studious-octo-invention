@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Next.js web dashboard for the Smart Farming system. Displays live ESP32 sensor readings (temperature, humidity, soil moisture, light) and exposes the "SIRAM" irrigation control button. Built as a static export and flashed onto the ESP32's LittleFS — the ESP32 serves it directly to browsers on its hotspot (`http://192.168.4.1/`). The browser polls same-origin `/api/sensors` and POSTs same-origin `/api/siram`; the ESP32 is both the static file host and the API server.
+Next.js web dashboard for the Smart Farming system. Displays live ESP32 sensor readings (soil moisture, PIR motion, pump status) and exposes the "SIRAM" irrigation control button. Built as a static export and flashed onto the ESP32's LittleFS — the ESP32 serves it directly to browsers on its hotspot (`http://192.168.4.1/`). The browser polls same-origin `/api/sensors` and POSTs same-origin `/api/siram`; the ESP32 is both the static file host and the API server.
 
 ## Ownership
 
@@ -27,6 +27,11 @@ All JSON, all under `http://192.168.4.1/`. No broker, no CORS, no mixed content.
 **SIRAM**
 - `POST /api/siram` body: `{ source?: "web" | "esp32" | "system" }` → `{ ok: true, queuedAt: <uptime-ms> }` — ESP32 latches relay+LED on immediately and returns. The `queued`/`pending` fields from the old broker contract are gone; the ESP32 is the executor, not a queue.
 
+**OTA**
+- `POST /api/ota` body: `{ url }` → `{ ok, error? }` — kicks off URL-based OTA firmware download to the inactive app partition. Returns 409 if an update is already in progress.
+- `POST /api/ota/upload` — multipart `.bin` file upload. Streams directly to the inactive partition via `Update.h`; ESP32 reboots on success.
+- `GET /api/ota/status` → `{ state, progress, error? }` — state is one of `idle`, `connecting`, `downloading`, `complete`, `error`. Progress is 0–100. Polled by the browser while URL-based download is active.
+
 ### Staleness Semantics (no server-stamped timestamps)
 
 The ESP32 has no RTC, so no epoch-ms timestamps cross the wire. Connection state is derived **purely from the browser's perspective**:
@@ -41,7 +46,7 @@ The ESP32 has no RTC, so no epoch-ms timestamps cross the wire. Connection state
 
 ### Client Mock (dev-only)
 
-`src/lib/clientMock.ts` simulates an ESP32 in the browser. Active when `NEXT_PUBLIC_USE_CLIENT_MOCK=true` (set automatically by `npm run dev` and `npm run build`). Generates jittered readings on each poll and acks SIRAM POSTs with `Date.now()` as `queuedAt`. Disabled by `npm run build:esp` so the production static export fetches from the real ESP32.
+`src/lib/clientMock.ts` simulates an ESP32 in the browser. Active when `NEXT_PUBLIC_USE_CLIENT_MOCK=true` (set automatically by `npm run dev` and `npm run build`). Returns static mock data (soil moisture 42%, PIR toggling every 5s) and acks SIRAM POSTs with `Date.now()` as `queuedAt`. Disabled by `npm run build:esp` so the production static export fetches from the real ESP32.
 
 ### Build Modes
 
@@ -57,6 +62,8 @@ The ESP32 has no RTC, so no epoch-ms timestamps cross the wire. Connection state
 - `src/components/` — React components (`Dashboard` is the client orchestrator).
 - `src/hooks/` — Client hooks (`useSensorPolling` owns the polling loop and SIRAM trigger state machine).
 - `src/lib/` — Pure logic: `types.ts`, `clientMock.ts`.
+- `src/hooks/useOtaUpdate.ts` — OTA status polling hook. POSTs to `/api/ota`, polls `/api/ota/status`, tracks `OtaUiState` (idle/sending/downloading/complete/error).
+- `src/components/OtaFloatingPanel.tsx` — slide-in right panel for OTA firmware updates. Opened from a gear icon in the page header. Has two tabs: **URL** (input + validation + background download) and **Unggah** (file picker + XHR upload with real-time progress). Shows progress bar, success, and error states.
 
 ### Polling Loop
 
@@ -84,7 +91,7 @@ When adding features, anything that requires server-side execution breaks `npm r
 ## Verification
 
 - `npm run build:esp` from `dashboard/` — must produce `out/index.html` and `out/_next/static/**` with no TypeScript or ESLint errors.
-- `npm run dev` → open `http://localhost:3000`, sensor cards must update every ~2s from the client mock; SIRAM button transitions through sending→queued→idle.
+- `npm run dev` → open `http://localhost:3000`, three sensor cards (soil moisture, PIR motion, pump status) must update every ~2s from the client mock; PIR toggles every 5s; SIRAM button transitions through sending→queued→idle.
 - End-to-end with hardware: see `firmware/README.md`.
 
 ## Child DOX Index

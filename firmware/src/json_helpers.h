@@ -8,10 +8,9 @@
 // Serialize a SensorReading into the JSON shape returned by GET /api/sensors.
 inline String serializeReading(const SensorReading& r) {
   JsonDocument doc;
-  doc["temperatureC"]     = r.temperatureC;
-  doc["humidityPct"]      = r.humidityPct;
   doc["soilMoisturePct"]  = r.soilMoisturePct;
-  doc["lightLux"]         = r.lightLux;
+  doc["pirActive"]        = r.pirActive;
+  doc["pumpActive"]       = r.pumpActive;
   doc["deviceId"]         = r.deviceId;
   doc["timestamp"]        = r.timestamp;
   String out;

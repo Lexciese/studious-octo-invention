@@ -1,28 +1,21 @@
 import type { SensorReading, SiramTriggerResponse } from "./types";
 
 const DEVICE_ID = "smart-farm-mock";
-const PREV: SensorReading = {
-  temperatureC: 26,
-  humidityPct: 60,
-  soilMoisturePct: 45,
-  lightLux: 12000,
-  deviceId: DEVICE_ID,
-  timestamp: 0,
-};
-
-function jitter(prev: number, min: number, max: number, step: number): number {
-  const delta = (Math.random() - 0.5) * 2 * step;
-  const next = prev + delta;
-  return Math.max(min, Math.min(max, next));
-}
 
 export function mockSensorReading(): SensorReading {
-  PREV.temperatureC = +jitter(PREV.temperatureC, 15, 38, 0.4).toFixed(2);
-  PREV.humidityPct = +jitter(PREV.humidityPct, 30, 90, 1.5).toFixed(1);
-  PREV.soilMoisturePct = +jitter(PREV.soilMoisturePct, 10, 80, 1.2).toFixed(1);
-  PREV.lightLux = Math.round(jitter(PREV.lightLux, 0, 60000, 800));
-  PREV.timestamp = Date.now();
-  return { ...PREV };
+  // ponytail: simple jitter-free mock. Static values with occasional toggle
+  // for PIR to demonstrate the motion card.
+  // Ceiling: add jittered soil moisture for more realistic dev experience.
+  const now = Date.now();
+  const pirToggle = Math.floor(now / 5000) % 2 === 0; // toggles every 5s
+
+  return {
+    soilMoisturePct: 42,
+    pirActive: pirToggle,
+    pumpActive: false,
+    deviceId: DEVICE_ID,
+    timestamp: now,
+  };
 }
 
 export function mockSiramResponse(): SiramTriggerResponse {

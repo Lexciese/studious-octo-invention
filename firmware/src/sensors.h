@@ -3,13 +3,13 @@
 
 #include "types.h"
 
-// Read each sensor, returning a value in the unit shown.
-// Default implementations return plausible jittered mock values; see sensors.cpp
-// for how to swap in real sensor libraries.
-float readTemperatureC();    // °C
-float readHumidityPct();     // % relative humidity
-float readSoilMoisturePct(); // % volumetric water content (0 = dry, 100 = saturated)
-int   readLightLux();        // lux
+// Read capacitive soil moisture sensor on PIN_SOIL_ANALOG.
+// Returns 0 (dry) to 100 (saturated).
+float readSoilMoisturePct();
+
+// Read PIR motion sensor on PIN_PIR.
+// Returns true when motion is detected (HIGH).
+bool readPir();
 
 // Fills a SensorReading with current values + the device id + timestamp.
 SensorReading readAllSensors();

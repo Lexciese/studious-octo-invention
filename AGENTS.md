@@ -127,9 +127,9 @@ All agents and developers in this repo operate in lazy-senior-dev mode:
 
 ## Child DOX Index
 
-- [`dashboard/AGENTS.md`](dashboard/AGENTS.md) — Next.js web dashboard: live sensor display + SIRAM control button. Built two ways (`dev` with client-side mock, `build:esp` static export for the ESP32). Also carries the Next.js 16 in-tree rules from `create-next-app`.
-- [`firmware/AGENTS.md`](firmware/AGENTS.md) — ESP32 Arduino firmware: WiFi soft-AP, built-in `WebServer` on port 80 serving the dashboard from LittleFS plus `/api/sensors` and `/api/siram` JSON endpoints, mock sensor reads with extension points, SIRAM relay + LED control.
+- [`dashboard/AGENTS.md`](dashboard/AGENTS.md) — Next.js web dashboard: soil moisture, PIR motion, pump status display + SIRAM control button. Built two ways (`dev` with client-side mock, `build:esp` static export for the ESP32). Also carries the Next.js 16 in-tree rules from `create-next-app`.
+- [`firmware/AGENTS.md`](firmware/AGENTS.md) — ESP32 Arduino firmware: WiFi soft-AP, built-in `WebServer` on port 80 serving the dashboard from LittleFS plus `/api/sensors` and `/api/siram` JSON endpoints, capacitive soil moisture sensor (analog), PIR motion sensor (digital), SG90 servo control, pump relay + LED.
 
 ---
 
-*Last updated: 2026-06-21*
+*Last updated: 2026-07-01*

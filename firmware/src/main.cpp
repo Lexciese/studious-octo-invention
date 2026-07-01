@@ -29,8 +29,8 @@ void setup() {
 
   beginWebServer();
 
-  Serial.printf("[MAIN] SIRAM duration %lu ms\n",
-                (unsigned long)SIRAM_DURATION_MS);
+  Serial.printf("[MAIN] pump duration %lu ms  servo GPIO %d  PIR GPIO %d\n",
+                (unsigned long)SIRAM_DURATION_MS, PIN_SERVO, PIN_PIR);
   Serial.println();
 }
 
@@ -38,10 +38,21 @@ void loop() {
   handleHttpClient();
   updateSiram();
 
+  // ponytail: poll PIR every loop iteration (sub-ms). No debounce needed —
+  // the HC-SR501 retriggers internally and holds HIGH for its own timeout.
+  if (readPir() && !servoActive()) {
+    triggerServo();
+  }
+
+  // Auto-pump based on soil moisture threshold.
+  updateAutoPump(readSoilMoisturePct());
+
   uint32_t now = millis();
   if (now - lastHeartbeatMs >= 10000UL) {
     lastHeartbeatMs = now;
-    Serial.printf("[MAIN] stations=%u  siram=%s\n",
-                  stationCount(), siramActive() ? "on" : "off");
+    Serial.printf("[MAIN] stations=%u  pump=%s  servo=%s\n",
+                  stationCount(),
+                  siramActive() ? "on" : "off",
+                  servoActive() ? "active" : "rest");
   }
 }

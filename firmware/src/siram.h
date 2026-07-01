@@ -3,18 +3,33 @@
 
 #include <Arduino.h>
 
-// Set pin modes for the relay and on-board LED. Call once in setup().
+// ─── Setup ───────────────────────────────────────────────────────────────────
+// Set pin modes for all outputs. Call once in setup().
 void beginSiram();
 
-// Latch the relay + LED on for SIRAM_DURATION_MS. Non-blocking — call
-// updateSiram() every loop iteration to turn them off when the timer elapses.
+// ─── Pump (relay + LED) ──────────────────────────────────────────────────────
+// Latch the pump relay + LED on for SIRAM_DURATION_MS. Non-blocking.
+// Safe to call while already running — extends the timer.
 void triggerSiram();
 
-// Call every loop iteration. Turns the relay + LED off when SIRAM_DURATION_MS
-// has elapsed since triggerSiram().
+// True while the pump relay is active.
+bool siramActive();
+
+// ─── Servo (SG90, PIR-triggered) ─────────────────────────────────────────────
+// Swing servo to SERVO_ACTIVE_DEG for SERVO_DURATION_MS, then return to rest.
+// Non-blocking. Safe to call while already active — extends the timer.
+void triggerServo();
+
+// True while the servo is at active position.
+bool servoActive();
+
+// ─── Update ──────────────────────────────────────────────────────────────────
+// Call every loop iteration. Turns off pump/servo when their timers elapse.
 void updateSiram();
 
-// True while the relay + LED are on.
-bool siramActive();
+// ─── Auto-pump ───────────────────────────────────────────────────────────────
+// Call every loop iteration. Triggers pump when soil moisture is below
+// threshold and the cooldown period has elapsed.
+void updateAutoPump(float soilMoisturePct);
 
 #endif // SIRAM_H

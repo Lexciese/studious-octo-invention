@@ -5,34 +5,34 @@
 #define CONFIG_H
 
 // ─── WiFi Access Point ───────────────────────────────────────────────────────
-// The ESP32 broadcasts this network. Clients (laptop/phone) join it to reach
-// the dashboard at http://192.168.4.1/.
 #define AP_SSID             "SmartFarm"
-// Set AP_USE_PASSWORD to true to enable WPA2-PSK (password must be 8+ chars).
-// Set to false for an open network.
 #define AP_USE_PASSWORD     true
 #define AP_PASSWORD         "tani1234"
 
-// Surfaced in the dashboard UI as the device identifier.
 #define DEVICE_ID           "smart-farm-01"
 
 // ─── Pin Map ─────────────────────────────────────────────────────────────────
-#define PIN_LED             2   // On-board LED on most ESP32 dev boards
-#define PIN_RELAY           26  // Active-high relay module for the water pump
+#define PIN_LED             2       // On-board LED (mirrors pump state)
+#define PIN_RELAY           26      // Active-high relay for water pump
+#define PIN_PIR             27      // HC-SR501 PIR motion sensor (digital)
+#define PIN_SERVO           14      // SG90 servo signal (PWM)
+#define PIN_SOIL_ANALOG     34      // Capacitive soil moisture sensor (ADC1)
 
-// Reserved for future sensor wiring — not used in the current mock build.
-#define PIN_I2C_SDA         21
-#define PIN_I2C_SCL         22
-#define PIN_SOIL_ANALOG     34  // ADC1 input-only pin
+// ─── Soil Moisture ───────────────────────────────────────────────────────────
+// ADC raw range for a typical capacitive probe: dry ≈ 2800, wet ≈ 1400.
+// Tune these per probe by reading serial output at known moisture levels.
+#define SOIL_DRY_ADC        2800
+#define SOIL_WET_ADC        1400
+// Auto-pump triggers when soil moisture falls below this percentage.
+#define SOIL_MOISTURE_THRESHOLD_PCT  30
+
+// ─── Servo ───────────────────────────────────────────────────────────────────
+#define SERVO_REST_DEG      0       // Degrees when idle
+#define SERVO_ACTIVE_DEG    90      // Degrees when PIR triggers
+#define SERVO_DURATION_MS   3000UL  // How long the servo stays at active position
 
 // ─── Timing (milliseconds) ───────────────────────────────────────────────────
-#define SIRAM_DURATION_MS   5000UL   // How long the valve stays open per command
-
-// ─── Mock Sensor Baselines (used until real sensors are wired) ───────────────
-// Replace these by editing sensors.{h,cpp} to call real sensor libraries.
-#define MOCK_TEMP_C         26.0f
-#define MOCK_HUMIDITY_PCT   60.0f
-#define MOCK_SOIL_PCT       45.0f
-#define MOCK_LIGHT_LUX      12000
+#define SIRAM_DURATION_MS   5000UL  // Pump run duration per trigger
+#define PUMP_COOLDOWN_MS    60000UL // Minimum interval between auto-pump cycles
 
 #endif // CONFIG_H

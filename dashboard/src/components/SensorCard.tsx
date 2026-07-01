@@ -2,11 +2,14 @@ import type { ReactNode } from "react";
 
 interface SensorCardProps {
   label: string;
-  value: number | null;
-  unit: string;
+  value: number | boolean | null;
+  unit?: string;
   icon: ReactNode;
   hint?: string;
   accent: "amber" | "sky" | "emerald" | "violet";
+  // ponytail: optional label overrides for boolean values.
+  // Ceiling: if more boolean cards appear, extract a StatusCard component.
+  boolLabels?: { true: string; false: string };
 }
 
 const ACCENT: Record<SensorCardProps["accent"], string> = {
@@ -26,8 +29,9 @@ export function SensorCard({
   icon,
   hint,
   accent,
+  boolLabels,
 }: SensorCardProps) {
-  const display = value === null ? "—" : formatValue(value);
+  const display = formatDisplay(value, boolLabels);
 
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-5 transition-colors hover:border-zinc-300 dark:border-white/10 dark:bg-zinc-900/60 dark:hover:border-white/20">
@@ -38,7 +42,7 @@ export function SensorCard({
           </p>
           <p className="mt-2 text-3xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
             {display}
-            {value !== null && (
+            {typeof value === "number" && (
               <span className="ml-1 text-base font-normal text-zinc-500 dark:text-zinc-400">
                 {unit}
               </span>
@@ -58,7 +62,14 @@ export function SensorCard({
   );
 }
 
-function formatValue(v: number): string {
+function formatDisplay(
+  v: number | boolean | null,
+  boolLabels?: { true: string; false: string },
+): string {
+  if (v === null) return "—";
+  if (typeof v === "boolean") {
+    return boolLabels?.[String(v) as "true" | "false"] ?? (v ? "Active" : "Idle");
+  }
   if (Math.abs(v) >= 1000) return Math.round(v).toLocaleString();
   if (Math.abs(v) >= 100) return v.toFixed(0);
   if (Math.abs(v) >= 10) return v.toFixed(1);

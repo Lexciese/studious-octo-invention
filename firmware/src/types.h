@@ -7,12 +7,11 @@
 // contract between ESP32 and dashboard.
 
 struct SensorReading {
-  float       temperatureC;
-  float       humidityPct;
-  float       soilMoisturePct;
-  int         lightLux;
+  float       soilMoisturePct;  // 0 = dry, 100 = saturated
+  bool        pirActive;        // true when PIR motion sensor detects movement
+  bool        pumpActive;       // true while pump relay is on
   const char* deviceId;
-  int64_t     timestamp;  // uptime milliseconds (no RTC); not used for staleness
+  int64_t     timestamp;        // uptime milliseconds (no RTC)
 };
 
 #endif // TYPES_H

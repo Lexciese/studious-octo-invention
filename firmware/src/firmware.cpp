@@ -51,12 +51,19 @@ static uint8_t stationCount() { return WiFi.softAPgetStationNum(); }
 // ──────────── Sensors ────────────
 
 static float readSoilMoisturePct() {
-  int raw = analogRead(PIN_SOIL_ANALOG);
-  float pct = map(raw, SOIL_DRY_ADC, SOIL_WET_ADC, 0, 100);
-  return constrain(pct, 0.0f, 100.0f);
+  int raw = digitalRead(PIN_SOIL_ANALOG);
+  float pct = map(raw, 0, 1, 100, 0);
+  pct = constrain(pct, 0.0f, 100.0f);
+  Serial.printf("[SOIL] raw=%d pct=%.0f%%\n", raw, pct);
+  // Serial.printf("[SOIL] raw=%d \n", raw);
+  return pct;
 }
 
-static bool readPir() { return digitalRead(PIN_PIR) == HIGH; }
+static bool readPir() {
+  bool pir = digitalRead(PIN_PIR) == HIGH;
+  Serial.printf("[PIR] %s\n", pir ? "HIGH" : "LOW");
+  return pir;
+}
 
 static SensorReading readAllSensors() {
   return {readSoilMoisturePct(), readPir(), pumpOn,
@@ -71,6 +78,7 @@ static void initActuators() {
   pinMode(PIN_BUZZER, OUTPUT); digitalWrite(PIN_BUZZER, LOW);
   servo.attach(PIN_SERVO); servo.write(SERVO_REST_DEG);
   pinMode(PIN_PIR, INPUT);
+  pinMode(PIN_SOIL_ANALOG, INPUT);
 }
 
 static void releasePump() {
@@ -98,6 +106,7 @@ static void activatePump(float pct) {
   uint32_t now = millis();
   if (now - lastPumpEndMs < PUMP_COOLDOWN_MS) return;
   if (pct >= SOIL_MOISTURE_THRESHOLD_PCT) return;
+  // if (pct >= 1) return; // KERING 
 
   pumpOn = true;
   pumpStartMs = millis();

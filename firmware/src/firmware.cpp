@@ -19,9 +19,11 @@ struct SensorReading {
 };
 
 static Servo servo;
-static bool  pumpOn   = false;
-static bool  svOn     = false;
-static uint32_t pumpStartMs = 0, svStartMs = 0, lastPumpEndMs = 0;
+static bool  pumpOn      = false;
+static bool  pumpManual  = false;
+static uint32_t pumpStartMs = 0, lastPumpEndMs = 0;
+static int svAngle = 45;
+static int svDir   = 1;
 
 // ──────────── WiFi AP ────────────
 
@@ -50,7 +52,6 @@ static uint8_t stationCount() { return WiFi.softAPgetStationNum(); }
 
 static float readSoilMoisturePct() {
   int raw = analogRead(PIN_SOIL_ANALOG);
-  // ponytail: linear inverse map — ADC high = dry, low = wet.
   float pct = map(raw, SOIL_DRY_ADC, SOIL_WET_ADC, 0, 100);
   return constrain(pct, 0.0f, 100.0f);
 }
@@ -62,48 +63,47 @@ static SensorReading readAllSensors() {
           DEVICE_ID, (int64_t)(esp_timer_get_time() / 1000LL)};
 }
 
-// ──────────── Actuators (pump + servo) ────────────
+// ──────────── Actuators (pump + servo + buzzer) ────────────
 
 static void initActuators() {
   pinMode(PIN_RELAY, OUTPUT); pinMode(PIN_LED, OUTPUT);
   digitalWrite(PIN_RELAY, LOW); digitalWrite(PIN_LED, LOW);
+  pinMode(PIN_BUZZER, OUTPUT); digitalWrite(PIN_BUZZER, LOW);
   servo.attach(PIN_SERVO); servo.write(SERVO_REST_DEG);
   pinMode(PIN_PIR, INPUT);
 }
 
-static void triggerPump() {
-  pumpOn = true; pumpStartMs = millis();
-  digitalWrite(PIN_RELAY, HIGH); digitalWrite(PIN_LED, HIGH);
-  Serial.printf("[PUMP] on %lu ms\n", (unsigned long)SIRAM_DURATION_MS);
-}
-
-static void triggerServo() {
-  svOn = true; svStartMs = millis();
-  servo.write(SERVO_ACTIVE_DEG);
-  Serial.printf("[SERVO] %d° %lu ms\n", SERVO_ACTIVE_DEG, (unsigned long)SERVO_DURATION_MS);
+static void releasePump() {
+  digitalWrite(PIN_RELAY, LOW);
+  digitalWrite(PIN_LED, LOW);
+  pumpOn = false;
 }
 
 static void updateActuators() {
   uint32_t now = millis();
   if (pumpOn && now - pumpStartMs >= SIRAM_DURATION_MS) {
-    digitalWrite(PIN_RELAY, LOW); digitalWrite(PIN_LED, LOW);
-    pumpOn = false; lastPumpEndMs = now;
+    releasePump();
+    pumpManual = false;
+    lastPumpEndMs = now;
     Serial.println("[PUMP] off");
-  }
-  if (svOn && now - svStartMs >= SERVO_DURATION_MS) {
-    servo.write(SERVO_REST_DEG); svOn = false;
-    Serial.println("[SERVO] rest");
   }
 }
 
-static void updateAutoPump(float pct) {
+// Priority-based pump control:
+//   1. Manual (API) — sets pumpManual, overrides auto
+//   2. Soil (auto) — runs only when pumpManual is false
+static void activatePump(float pct) {
+  if (pumpManual) return;  // manual takes priority
   if (pumpOn) return;
   uint32_t now = millis();
   if (now - lastPumpEndMs < PUMP_COOLDOWN_MS) return;
-  if (pct < SOIL_MOISTURE_THRESHOLD_PCT) {
-    Serial.printf("[PUMP] auto: %.0f%% < %d%%\n", pct, SOIL_MOISTURE_THRESHOLD_PCT);
-    triggerPump();
-  }
+  if (pct >= SOIL_MOISTURE_THRESHOLD_PCT) return;
+
+  pumpOn = true;
+  pumpStartMs = millis();
+  digitalWrite(PIN_RELAY, HIGH);
+  digitalWrite(PIN_LED, HIGH);
+  Serial.printf("[PUMP] soil=%.0f%% on %lu ms\n", pct, (unsigned long)SIRAM_DURATION_MS);
 }
 
 // ──────────── Web server ────────────
@@ -141,8 +141,18 @@ static void handleSensors() {
 }
 
 static void handleSiram() {
-  triggerPump();
-  JsonDocument d; d["ok"] = true; d["queuedAt"] = (int64_t)millis();
+  // Manual trigger — sets pumpManual flag so auto won't override
+  pumpManual = true;
+  pumpOn = true;
+  pumpStartMs = millis();
+  digitalWrite(PIN_RELAY, HIGH);
+  digitalWrite(PIN_LED, HIGH);
+  Serial.printf("[PUMP] api on %lu ms\n", (unsigned long)SIRAM_DURATION_MS);
+
+  JsonDocument d;
+  d["ok"] = true;
+  d["on"] = true;
+  d["queuedAt"] = (int64_t)millis();
   String out; serializeJson(d, out);
   server.send(200, "application/json; charset=utf-8", out);
 }
@@ -172,25 +182,40 @@ static void initWebServer() {
 
 void setup() {
   Serial.begin(115200); delay(200); Serial.println("\nSmart Farming booting…");
-  startAP();
   initActuators();
+  startAP();
   if (!LittleFS.begin(true)) Serial.println("[FS] LittleFS mount failed");
   initWebServer();
-  Serial.printf("[MAIN] pump=%lums servo=GPIO%d PIR=GPIO%d\n",
-                (unsigned long)SIRAM_DURATION_MS, PIN_SERVO, PIN_PIR);
+  Serial.printf("[MAIN] pump=GPIO%d servo=GPIO%d PIR=GPIO%d buzzer=GPIO%d soil=GPIO%d\n",
+                PIN_RELAY, PIN_SERVO, PIN_PIR, PIN_BUZZER, PIN_SOIL_ANALOG);
 }
 
 static uint32_t lastHb = 0;
 
+static void sweepServo() {
+  servo.write(svAngle);
+  svAngle += svDir;
+  if (svAngle >= 90) svDir = -1;
+  if (svAngle <= 45) svDir = 1;
+}
+
 void loop() {
   server.handleClient();
-  updateActuators();
-  if (readPir() && !svOn) triggerServo();
-  updateAutoPump(readSoilMoisturePct());
+
+  sweepServo();
+  digitalWrite(PIN_BUZZER, readPir() ? HIGH : LOW);
+
+  if (pumpOn) updateActuators();
+  activatePump(readSoilMoisturePct());
+
+  // ponytail: sweeps each loop iteration at ~20 kHz — SG90 can't move that
+  // fast, so it smooths into a continuous pan. Fine for a scare/gate motion.
+  delay(5);
+
   uint32_t now = millis();
   if (now - lastHb >= 10000) {
     lastHb = now;
-    Serial.printf("[MAIN] stations=%u pump=%s servo=%s\n",
-                  stationCount(), pumpOn ? "on" : "off", svOn ? "active" : "rest");
+    Serial.printf("[MAIN] stations=%u pump=%s\n",
+                  stationCount(), pumpOn ? "on" : "off");
   }
 }

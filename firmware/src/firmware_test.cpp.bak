@@ -1,0 +1,25 @@
+// Relay smoke test — toggles pump relay on/off every 5 seconds.
+// Use this to verify relay wiring before running the full firmware.
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include "config.h"
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(AP_SSID, AP_USE_PASSWORD ? AP_PASSWORD : NULL);
+  pinMode(PIN_RELAY, OUTPUT);
+  digitalWrite(PIN_RELAY, LOW);
+  Serial.println("\nRelay test — toggling every 5 s");
+}
+
+void loop() {
+  digitalWrite(PIN_RELAY, HIGH);
+  Serial.println("[TEST] relay ON");
+  delay(5000);
+
+  digitalWrite(PIN_RELAY, LOW);
+  Serial.println("[TEST] relay OFF");
+  delay(5000);
+}

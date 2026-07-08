@@ -1,0 +1,58 @@
+// Minimal web relay test — toggle pump relay from a browser.
+// No sensors, no servo, no auto-pump. Just WiFi AP + SIRAM button.
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include "config.h"
+
+static WebServer server(80);
+static bool relayOn = false;
+
+static const char PAGE[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay Test</title>
+<style>body{font-family:sans-serif;margin:2em;text-align:center}
+button{font-size:1.5em;padding:1em 2em;border-radius:1em;border:none;color:#fff;background:#2563eb;cursor:pointer}
+button:active{background:#1d4ed8}
+#s{font-size:0.9em;color:#666;margin-top:1em}</style>
+</head><body>
+<h1>Relay Test</h1>
+<button onclick="fetch('/api/siram',{method:'POST'}).then(r=>r.json()).then(d=>document.getElementById('s').textContent=d.on?'Relay ON':'Relay OFF')">SIRAM</button>
+<p id="s">Idle</p>
+</body></html>)rawliteral";
+
+void handleRoot() {
+  server.send(200, "text/html; charset=utf-8", PAGE);
+}
+
+void handleSiram() {
+  relayOn = !relayOn;
+  digitalWrite(PIN_RELAY, relayOn ? LOW : HIGH);  // active-low relay
+  digitalWrite(PIN_LED, relayOn ? HIGH : LOW);
+  char buf[64];
+  snprintf(buf, sizeof(buf), "{\"on\":%s}", relayOn ? "true" : "false");
+  server.send(200, "application/json", buf);
+  Serial.printf("[TEST] relay %s\n", relayOn ? "ON" : "OFF");
+}
+
+void setup() {
+  Serial.begin(115200); delay(200);
+  Serial.println("\nRelay web test");
+
+  pinMode(PIN_RELAY, OUTPUT); digitalWrite(PIN_RELAY, HIGH);
+  pinMode(PIN_LED, OUTPUT);    digitalWrite(PIN_LED, LOW);
+
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(AP_SSID, AP_USE_PASSWORD ? AP_PASSWORD : NULL);
+  Serial.printf("[AP] %s http://%s/\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/api/siram", HTTP_POST, handleSiram);
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+}

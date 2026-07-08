@@ -1,0 +1,87 @@
+// Minimal timed-relay test — press SIRAM, relay holds for SIRAM_DURATION_MS.
+// No sensors, no auto-pump. Used to verify the timed latch behavior in isolation.
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ArduinoJson.h>
+#include "config.h"
+
+static WebServer server(80);
+static bool      pumpOn      = false;
+static uint32_t  pumpStartMs = 0;
+
+static const char PAGE[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay Timed Test</title>
+<style>body{font-family:sans-serif;margin:2em;text-align:center}
+button{font-size:1.5em;padding:1em 2em;border-radius:1em;border:none;color:#fff;background:#2563eb;cursor:pointer}
+button:active{background:#1d4ed8}
+#s{font-size:0.9em;color:#666;margin-top:1em}</style>
+</head><body>
+<h1>Relay Timed Test</h1>
+<button onclick="fetch('/api/siram',{method:'POST'}).then(r=>r.json()).then(d=>document.getElementById('s').textContent=d.on?'Relay ON':'Relay OFF')">SIRAM</button>
+<p id="s">Idle</p>
+</body></html>)rawliteral";
+
+static void handleRoot() {
+  server.send(200, "text/html; charset=utf-8", PAGE);
+}
+
+static void triggerPump() {
+  pumpOn = true;
+  pumpStartMs = millis();
+  digitalWrite(PIN_RELAY, LOW);
+  digitalWrite(PIN_LED, HIGH);
+  Serial.printf("[TEST] pump on %lu ms\n", (unsigned long)SIRAM_DURATION_MS);
+}
+
+static void releasePump() {
+  digitalWrite(PIN_RELAY, HIGH);
+  digitalWrite(PIN_LED, LOW);
+  pumpOn = false;
+  Serial.println("[TEST] pump off");
+}
+
+static void handleSiram() {
+  triggerPump();
+  JsonDocument d;
+  d["ok"] = true;
+  d["on"] = true;
+  d["queuedAt"] = (int64_t)millis();
+  String out; serializeJson(d, out);
+  server.send(200, "application/json; charset=utf-8", out);
+}
+
+static void handleState() {
+  JsonDocument d;
+  d["on"] = pumpOn;
+  String out; serializeJson(d, out);
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json; charset=utf-8", out);
+}
+
+void setup() {
+  Serial.begin(115200); delay(200);
+  Serial.println("\nRelay timed test");
+
+  pinMode(PIN_RELAY, OUTPUT); digitalWrite(PIN_RELAY, HIGH);
+  pinMode(PIN_LED, OUTPUT);    digitalWrite(PIN_LED, LOW);
+
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(AP_SSID, AP_USE_PASSWORD ? AP_PASSWORD : NULL);
+  Serial.printf("[AP] %s http://%s/\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/api/siram", HTTP_POST, handleSiram);
+  server.on("/api/state", HTTP_GET, handleState);
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+  if (pumpOn && millis() - pumpStartMs >= SIRAM_DURATION_MS) {
+    releasePump();
+  }
+}

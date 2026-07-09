@@ -51,11 +51,18 @@ static uint8_t stationCount() { return WiFi.softAPgetStationNum(); }
 // ──────────── Sensors ────────────
 
 static float readSoilMoisturePct() {
+  // ponytail: moving average over 8 samples. Smooths digital read noise on
+  // ADC2. Ceiling: increase TAP for heavier smoothing at the cost of lag.
+  #define SMA_TAP 8
+  static int buf[SMA_TAP] = {0}, idx = 0, sum = 0;
   int raw = digitalRead(PIN_SOIL_ANALOG);
-  float pct = map(raw, 0, 1, 100, 0);
-  pct = constrain(pct, 0.0f, 100.0f);
-  Serial.printf("[SOIL] raw=%d pct=%.0f%%\n", raw, pct);
-  // Serial.printf("[SOIL] raw=%d \n", raw);
+  sum -= buf[idx];
+  buf[idx] = raw;
+  sum += buf[idx];
+  idx = (idx + 1) % SMA_TAP;
+  // sum ranges 0–8 (all LOW→all HIGH). Map to 100–0% (LOW=wet, HIGH=dry).
+  float pct = map(sum, 0, SMA_TAP, 100, 0);
+  Serial.printf("[SOIL] raw=%d sum=%d pct=%.0f%%\n", raw, sum, pct);
   return pct;
 }
 

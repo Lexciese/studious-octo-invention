@@ -209,10 +209,17 @@ void setup() {
 static uint32_t lastHb = 0;
 
 static void sweepServo() {
-  servo.write(svAngle);
-  svAngle += svDir;
-  if (svAngle >= 90) svDir = -1;
-  if (svAngle <= 45) svDir = 1;
+  static enum { OFF, ON } st = OFF;
+  static uint32_t t0 = 0;
+  if (st == OFF) {
+    if (millis() - t0 >= 10000UL) { st = ON; t0 = millis(); svAngle = 45; svDir = 1; }
+  } else {
+    if (millis() - t0 >= 30000UL) { servo.write(0); st = OFF; t0 = millis(); return; }
+    servo.write(svAngle);
+    svAngle += svDir;
+    if (svAngle >= 90) svDir = -1;
+    if (svAngle <= 45) svDir = 1;
+  }
 }
 
 void loop() {
